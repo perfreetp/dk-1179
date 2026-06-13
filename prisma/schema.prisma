@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model InspectionTask {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  scheduleType ScheduleType
+  cronExpression String?
+  dataDomain  String
+  owner       String
+  status      TaskStatus
+  rules       InspectionRule[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model InspectionRule {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        InspectionTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  name        String
+  ruleType    RuleType
+  tableName   String
+  columnName  String
+  params      Json
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model InspectionResult {
+  id              String         @id @default(cuid())
+  taskId          String
+  task            InspectionTask @relation(fields: [taskId], references: [id])
+  ruleId          String
+  rule            InspectionRule @relation(fields: [ruleId], references: [id])
+  status          ResultStatus
+  errorCount      Int
+  errorDetails    Json?
+  affectedRows    Int
+  suggestions     String?
+  executedAt      DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+}
+
+model Issue {
+  id              String         @id @default(cuid())
+  resultId        String
+  result          InspectionResult @relation(fields: [resultId], references: [id])
+  rowKey          String
+  errorType       String
+  errorMessage    String
+  context         Json?
+  status          IssueStatus
+  assignee        String?
+  remark          String?
+  claimedAt       DateTime?
+  closedAt        DateTime?
+  reviewedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model AlertRecord {
+  id              String         @id @default(cuid())
+  taskId          String
+  task            InspectionTask @relation(fields: [taskId], references: [id])
+  channelType     ChannelType
+  content         String
+  status          AlertStatus
+  sentAt          DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+enum ScheduleType {
+  DAILY
+  HOURLY
+  MANUAL
+}
+
+enum TaskStatus {
+  RUNNING
+  PAUSED
+  STOPPED
+}
+
+enum RuleType {
+  NULL_CHECK
+  DUPLICATE_CHECK
+  FLUCTUATION_CHECK
+  RANGE_CHECK
+  ENUM_CHECK
+  CONSISTENCY_CHECK
+}
+
+enum ResultStatus {
+  PASS
+  FAIL
+  SKIPPED
+}
+
+enum IssueStatus {
+  OPEN
+  CLAIMED
+  RESOLVED
+  CLOSED
+  REVIEWED
+}
+
+enum ChannelType {
+  FEISHU
+  DINGTALK
+  WECHAT
+  EMAIL
+}
+
+enum AlertStatus {
+  PENDING
+  SENT
+  FAILED
+}
