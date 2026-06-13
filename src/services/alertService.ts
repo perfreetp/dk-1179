@@ -3,7 +3,7 @@ import { ChannelType, AlertStatus } from '@prisma/client';
 import axios from 'axios';
 
 export class AlertService {
-  async sendAlert(taskId: string, failResults: Array<{ ruleName: string; errorCount: number }>): Promise<void> {
+  async sendAlert(taskId: string, failResults: Array<{ ruleName: string; errorCount: number; isDataSourceError?: boolean; tableName?: string }>): Promise<void> {
     const task = await prisma.inspectionTask.findUnique({ where: { id: taskId } });
     if (!task) return;
 
@@ -21,11 +21,25 @@ export class AlertService {
     await this.sendToFeishu(content, alertRecord.id);
   }
 
-  private buildAlertContent(taskName: string, failResults: Array<{ ruleName: string; errorCount: number }>): string {
-    const totalErrors = failResults.reduce((sum, r) => sum + r.errorCount, 0);
-    const ruleDetails = failResults.map(r => `- ${r.ruleName}: ${r.errorCount} 个问题`).join('\n');
+  private buildAlertContent(taskName: string, failResults: Array<{ ruleName: string; errorCount: number; isDataSourceError?: boolean; tableName?: string }>): string {
+    const dataSourceErrors = failResults.filter(r => r.isDataSourceError);
+    const ruleFailures = failResults.filter(r => !r.isDataSourceError);
     
-    return `【数据巡检异常】\n任务: ${taskName}\n异常规则数: ${failResults.length}\n总问题数: ${totalErrors}\n问题详情:\n${ruleDetails}`;
+    const totalErrors = ruleFailures.reduce((sum, r) => sum + r.errorCount, 0);
+    
+    let content = `【数据巡检异常】\n任务: ${taskName}\n`;
+    
+    if (dataSourceErrors.length > 0) {
+      const dataSourceDetails = dataSourceErrors.map(r => `- ${r.ruleName}: 数据源 ${r.tableName} 不可用`).join('\n');
+      content += `不可用数据源数: ${dataSourceErrors.length}\n数据源详情:\n${dataSourceDetails}\n`;
+    }
+    
+    if (ruleFailures.length > 0) {
+      const ruleDetails = ruleFailures.map(r => `- ${r.ruleName}: ${r.errorCount} 个问题`).join('\n');
+      content += `异常规则数: ${ruleFailures.length}\n总问题数: ${totalErrors}\n问题详情:\n${ruleDetails}`;
+    }
+    
+    return content;
   }
 
   private async sendToFeishu(content: string, alertId: string): Promise<void> {

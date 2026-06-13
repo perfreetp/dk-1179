@@ -107,8 +107,12 @@ taskRoutes.post('/:id/execute', async (req, res) => {
 
 taskRoutes.post('/:taskId/rules/:ruleId/retry', async (req, res) => {
   try {
-    await taskService.retryRule(req.params.taskId, req.params.ruleId);
-    res.json({ success: true });
+    const result = await taskService.retryRule(req.params.taskId, req.params.ruleId);
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }

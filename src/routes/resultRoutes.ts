@@ -4,6 +4,16 @@ import { ResultStatus } from '@prisma/client';
 
 export const resultRoutes = express.Router();
 
+resultRoutes.get('/summary', async (req, res) => {
+  try {
+    const taskId = req.query.taskId as string | undefined;
+    const summary = await resultService.getSummary(taskId);
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
 resultRoutes.get('/', async (req, res) => {
   try {
     const query = {

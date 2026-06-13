@@ -105,6 +105,7 @@ enum ResultStatus {
   PASS
   FAIL
   SKIPPED
+  DATA_SOURCE_ERROR
 }
 
 enum IssueStatus {

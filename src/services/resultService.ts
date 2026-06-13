@@ -43,7 +43,7 @@ export class ResultService {
     });
   }
 
-  async getTrend(taskId: string, days: number = 7): Promise<Array<{ date: string; pass: number; fail: number; skipped: number }>> {
+  async getTrend(taskId: string, days: number = 7): Promise<Array<{ date: string; pass: number; fail: number; skipped: number; dataSourceError: number }>> {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -56,20 +56,21 @@ export class ResultService {
       orderBy: { executedAt: 'asc' },
     });
 
-    const trendMap = new Map<string, { pass: number; fail: number; skipped: number }>();
+    const trendMap = new Map<string, { pass: number; fail: number; skipped: number; dataSourceError: number }>();
     
     for (let i = 0; i <= days; i++) {
       const date = new Date();
       date.setDate(date.getDate() - i);
       const dateStr = date.toISOString().split('T')[0];
-      trendMap.set(dateStr, { pass: 0, fail: 0, skipped: 0 });
+      trendMap.set(dateStr, { pass: 0, fail: 0, skipped: 0, dataSourceError: 0 });
     }
 
     results.forEach(result => {
       const dateStr = result.executedAt.toISOString().split('T')[0];
       const stats = trendMap.get(dateStr);
       if (stats) {
-        stats[result.status.toLowerCase() as keyof typeof stats]++;
+        const statusKey = result.status === ResultStatus.DATA_SOURCE_ERROR ? 'dataSourceError' : (result.status.toLowerCase() as keyof typeof stats);
+        stats[statusKey]++;
       }
     });
 
@@ -82,6 +83,7 @@ export class ResultService {
     totalExecutions: number;
     passRate: number;
     failCount: number;
+    dataSourceErrorCount: number;
     pendingIssues: number;
   }> {
     const where: any = {};
@@ -95,12 +97,14 @@ export class ResultService {
     const totalExecutions = results.length;
     const passCount = results.filter(r => r.status === ResultStatus.PASS).length;
     const failCount = results.filter(r => r.status === ResultStatus.FAIL).length;
+    const dataSourceErrorCount = results.filter(r => r.status === ResultStatus.DATA_SOURCE_ERROR).length;
     const passRate = totalExecutions > 0 ? (passCount / totalExecutions) * 100 : 0;
 
     return {
       totalExecutions,
       passRate: parseFloat(passRate.toFixed(2)),
       failCount,
+      dataSourceErrorCount,
       pendingIssues: issues.length,
     };
   }

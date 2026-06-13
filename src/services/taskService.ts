@@ -33,6 +33,8 @@ export interface ExecuteResult {
   success: boolean;
   message: string;
   executedRules?: number;
+  failedTables?: string[];
+  dataSourceErrors?: Array<{ ruleName: string; tableName: string }>;
 }
 
 export class TaskService {
@@ -158,10 +160,15 @@ export class TaskService {
     }
 
     let hasFailures = false;
+    let hasDataSourceErrors = false;
     const failResults: Array<{
       ruleName: string;
       errorCount: number;
+      isDataSourceError?: boolean;
+      tableName?: string;
     }> = [];
+    const dataSourceErrors: Array<{ ruleName: string; tableName: string }> = [];
+    const failedTables = new Set<string>();
 
     for (const rule of enabledRules) {
       const { result, issues } = await this.ruleEngine.executeRule(rule);
@@ -170,7 +177,7 @@ export class TaskService {
         data: {
           taskId: task.id,
           ruleId: rule.id,
-          status: result.status === 'DATA_SOURCE_ERROR' ? 'FAIL' : (result.status as any),
+          status: result.status as any,
           errorCount: result.errorCount,
           errorDetails: result.errorDetails || { errorMessage: result.errorMessage },
           affectedRows: result.affectedRows,
@@ -178,7 +185,7 @@ export class TaskService {
         },
       });
 
-      if (result.status === 'FAIL' || result.status === 'DATA_SOURCE_ERROR') {
+      if (result.status === 'FAIL') {
         hasFailures = true;
         failResults.push({ ruleName: rule.name, errorCount: result.errorCount });
 
@@ -194,6 +201,17 @@ export class TaskService {
             },
           });
         }
+      } else if (result.status === 'DATA_SOURCE_ERROR') {
+        hasDataSourceErrors = true;
+        hasFailures = true;
+        failedTables.add(rule.tableName);
+        dataSourceErrors.push({ ruleName: rule.name, tableName: rule.tableName });
+        failResults.push({ 
+          ruleName: rule.name, 
+          errorCount: 0, 
+          isDataSourceError: true,
+          tableName: rule.tableName 
+        });
       }
     }
 
@@ -201,55 +219,88 @@ export class TaskService {
       await alertService.sendAlert(taskId, failResults);
     }
 
+    if (hasDataSourceErrors) {
+      return { 
+        success: false, 
+        message: `部分数据源不可用: ${Array.from(failedTables).join(', ')}`,
+        executedRules: enabledRules.length,
+        failedTables: Array.from(failedTables),
+        dataSourceErrors 
+      };
+    }
+
     return { success: true, message: '执行成功', executedRules: enabledRules.length };
   }
 
-  async retryRule(taskId: string, ruleId: string): Promise<void> {
+  async retryRule(taskId: string, ruleId: string): Promise<ExecuteResult> {
     const task = await prisma.inspectionTask.findUnique({
       where: { id: taskId },
       include: { rules: true },
     });
 
-    if (!task) return;
+    if (!task) {
+      return { success: false, message: '任务不存在' };
+    }
+
+    if (task.status !== TaskStatus.RUNNING) {
+      return { success: false, message: '任务已暂停或停止' };
+    }
 
     const rule = task.rules.find(r => r.id === ruleId);
-    if (!rule) return;
+    if (!rule) {
+      return { success: false, message: '规则不存在' };
+    }
+
+    if (!rule.enabled) {
+      return { success: false, message: '规则已关闭' };
+    }
 
     const { result, issues } = await this.ruleEngine.executeRule(rule);
 
-    await prisma.inspectionResult.create({
+    const dbResult = await prisma.inspectionResult.create({
       data: {
         taskId: task.id,
         ruleId: rule.id,
         status: result.status as any,
         errorCount: result.errorCount,
-        errorDetails: result.errorDetails,
+        errorDetails: result.errorDetails || { errorMessage: result.errorMessage },
         affectedRows: result.affectedRows,
         suggestions: result.suggestions,
       },
     });
 
     if (result.status === 'FAIL') {
-      const latestResult = await prisma.inspectionResult.findFirst({
-        where: { taskId, ruleId },
-        orderBy: { createdAt: 'desc' },
-      });
-
-      if (latestResult) {
-        for (const issue of issues) {
-          await prisma.issue.create({
-            data: {
-              resultId: latestResult.id,
-              rowKey: issue.rowKey,
-              errorType: issue.errorType,
-              errorMessage: issue.errorMessage,
-              context: issue.context,
-              status: 'OPEN',
-            },
-          });
-        }
+      for (const issue of issues) {
+        await prisma.issue.create({
+          data: {
+            resultId: dbResult.id,
+            rowKey: issue.rowKey,
+            errorType: issue.errorType,
+            errorMessage: issue.errorMessage,
+            context: issue.context,
+            status: 'OPEN',
+          },
+        });
       }
+      await alertService.sendAlert(taskId, [{ ruleName: rule.name, errorCount: result.errorCount }]);
+      return { success: true, message: '执行成功，发现问题', executedRules: 1 };
+    } else if (result.status === 'DATA_SOURCE_ERROR') {
+      await alertService.sendAlert(taskId, [{ 
+        ruleName: rule.name, 
+        errorCount: 0, 
+        isDataSourceError: true,
+        tableName: rule.tableName 
+      }]);
+      return { 
+        success: false, 
+        message: `数据源不可用: ${rule.tableName}`,
+        executedRules: 1,
+        failedTables: [rule.tableName],
+        dataSourceErrors: [{ ruleName: rule.name, tableName: rule.tableName }]
+      };
     }
+
+    return { success: true, message: '执行成功，全部通过', executedRules: 1 };
   }
 }
 
