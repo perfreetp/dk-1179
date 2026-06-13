@@ -1,11 +1,12 @@
 import { InspectionRule, RuleType } from '@prisma/client';
 
 export interface RuleResult {
-  status: 'PASS' | 'FAIL' | 'SKIPPED';
+  status: 'PASS' | 'FAIL' | 'SKIPPED' | 'DATA_SOURCE_ERROR';
   errorCount: number;
   errorDetails?: Record<string, unknown>;
   affectedRows: number;
   suggestions?: string;
+  errorMessage?: string;
 }
 
 export interface IssueDetail {
@@ -48,7 +49,20 @@ export class RuleEngine {
       };
     }
 
-    const tableData = this.mockDataStore.get(rule.tableName) || [];
+    if (!this.mockDataStore.has(rule.tableName)) {
+      return {
+        result: {
+          status: 'DATA_SOURCE_ERROR',
+          errorCount: 0,
+          affectedRows: 0,
+          errorMessage: `数据源表 ${rule.tableName} 不存在或不可用`,
+          suggestions: `请确认表 ${rule.tableName} 是否存在且配置正确`,
+        },
+        issues: [],
+      };
+    }
+
+    const tableData = this.mockDataStore.get(rule.tableName)!;
     const issues: IssueDetail[] = [];
 
     switch (rule.ruleType) {

@@ -29,6 +29,12 @@ export interface UpdateTaskRequest {
   owner?: string;
 }
 
+export interface ExecuteResult {
+  success: boolean;
+  message: string;
+  executedRules?: number;
+}
+
 export class TaskService {
   private ruleEngine = new RuleEngine();
 
@@ -132,14 +138,23 @@ export class TaskService {
     return updatedTask;
   }
 
-  async executeTask(taskId: string): Promise<void> {
+  async executeTask(taskId: string): Promise<ExecuteResult> {
     const task = await prisma.inspectionTask.findUnique({
       where: { id: taskId },
       include: { rules: true },
     });
 
-    if (!task || task.status !== TaskStatus.RUNNING) {
-      return;
+    if (!task) {
+      return { success: false, message: '任务不存在' };
+    }
+
+    if (task.status !== TaskStatus.RUNNING) {
+      return { success: false, message: '任务已暂停或停止' };
+    }
+
+    const enabledRules = task.rules.filter(r => r.enabled);
+    if (enabledRules.length === 0) {
+      return { success: false, message: '没有可用的规则' };
     }
 
     let hasFailures = false;
@@ -148,22 +163,22 @@ export class TaskService {
       errorCount: number;
     }> = [];
 
-    for (const rule of task.rules) {
+    for (const rule of enabledRules) {
       const { result, issues } = await this.ruleEngine.executeRule(rule);
 
       const dbResult = await prisma.inspectionResult.create({
         data: {
           taskId: task.id,
           ruleId: rule.id,
-          status: result.status as any,
+          status: result.status === 'DATA_SOURCE_ERROR' ? 'FAIL' : (result.status as any),
           errorCount: result.errorCount,
-          errorDetails: result.errorDetails,
+          errorDetails: result.errorDetails || { errorMessage: result.errorMessage },
           affectedRows: result.affectedRows,
           suggestions: result.suggestions,
         },
       });
 
-      if (result.status === 'FAIL') {
+      if (result.status === 'FAIL' || result.status === 'DATA_SOURCE_ERROR') {
         hasFailures = true;
         failResults.push({ ruleName: rule.name, errorCount: result.errorCount });
 
@@ -185,6 +200,8 @@ export class TaskService {
     if (hasFailures) {
       await alertService.sendAlert(taskId, failResults);
     }
+
+    return { success: true, message: '执行成功', executedRules: enabledRules.length };
   }
 
   async retryRule(taskId: string, ruleId: string): Promise<void> {

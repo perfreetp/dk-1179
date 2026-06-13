@@ -94,8 +94,12 @@ taskRoutes.post('/:id/pause', async (req, res) => {
 
 taskRoutes.post('/:id/execute', async (req, res) => {
   try {
-    await taskService.executeTask(req.params.id);
-    res.json({ success: true });
+    const result = await taskService.executeTask(req.params.id);
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });
   }

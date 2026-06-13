@@ -9,7 +9,7 @@ export class AlertService {
 
     const content = this.buildAlertContent(task.name, failResults);
 
-    await prisma.alertRecord.create({
+    const alertRecord = await prisma.alertRecord.create({
       data: {
         taskId,
         channelType: ChannelType.FEISHU,
@@ -18,7 +18,7 @@ export class AlertService {
       },
     });
 
-    await this.sendToFeishu(content);
+    await this.sendToFeishu(content, alertRecord.id);
   }
 
   private buildAlertContent(taskName: string, failResults: Array<{ ruleName: string; errorCount: number }>): string {
@@ -28,21 +28,46 @@ export class AlertService {
     return `【数据巡检异常】\n任务: ${taskName}\n异常规则数: ${failResults.length}\n总问题数: ${totalErrors}\n问题详情:\n${ruleDetails}`;
   }
 
-  private async sendToFeishu(content: string): Promise<void> {
-    try {
-      const webhookUrl = process.env.FEISHU_WEBHOOK_URL || '';
-      if (!webhookUrl) {
-        console.log('飞书webhook未配置，跳过告警推送');
-        return;
-      }
+  private async sendToFeishu(content: string, alertId: string): Promise<void> {
+    const webhookUrl = process.env.FEISHU_WEBHOOK_URL || '';
+    
+    if (!webhookUrl) {
+      await prisma.alertRecord.update({
+        where: { id: alertId },
+        data: { 
+          status: AlertStatus.FAILED,
+          sentAt: new Date(),
+          errorMessage: 'Webhook未配置',
+        },
+      });
+      console.log('飞书webhook未配置，告警记录标记为失败');
+      return;
+    }
 
+    try {
       await axios.post(webhookUrl, {
         msg_type: 'text',
         content: { text: content },
       });
 
+      await prisma.alertRecord.update({
+        where: { id: alertId },
+        data: { 
+          status: AlertStatus.SENT,
+          sentAt: new Date(),
+        },
+      });
       console.log('飞书告警发送成功');
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : '发送失败';
+      await prisma.alertRecord.update({
+        where: { id: alertId },
+        data: { 
+          status: AlertStatus.FAILED,
+          sentAt: new Date(),
+          errorMessage: errorMsg,
+        },
+      });
       console.error('飞书告警发送失败:', error);
     }
   }
